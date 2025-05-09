@@ -50,15 +50,51 @@ const App = () => {
   }, [messages]);
 
   const handleSend = async () => {
-    if (!input.trim() || apiKeyError) return;
-    
-    const userMessage = { role: 'user', content: input };
-    const updated = [...messages, userMessage];
-    setMessages(updated);
-    setInput('');
-    setIsLoading(true);
-    setError(null);
+  if (!input.trim() || apiKeyError) return;
 
+  const userMessage = { role: 'user', content: input };
+  const updated = [...messages, userMessage];
+  setMessages(updated);
+  setInput('');
+  setIsLoading(true);
+  setError(null);
+
+  const normalize = str => str.toLowerCase().replace(/[^a-z0-9]+/gi, ' ').trim();
+  const userQ = normalize(input);
+
+  let bestMatch = null;
+  let bestScore = 0;
+  faqs.forEach(faq => {
+    const faqQ = normalize(faq.question);
+    if (faqQ === userQ) {
+      bestMatch = faq;
+      bestScore = 1;
+    } else if (faqQ.includes(userQ) || userQ.includes(faqQ)) {
+      if (bestScore < 0.9) {
+        bestMatch = faq;
+        bestScore = 0.9;
+      }
+    } else {
+      const userTokens = userQ.split(' ');
+      const faqTokens = faqQ.split(' ');
+      const overlap = userTokens.filter(t => faqTokens.includes(t)).length;
+      const score = overlap / Math.max(faqTokens.length, userTokens.length);
+      if (score > bestScore && score > 0.6) { 
+        bestMatch = faq;
+        bestScore = score;
+      }
+    }
+  });
+
+  if (bestMatch) {
+    setTimeout(() => {
+      setMessages(prev => [...prev, { role: 'assistant', content: bestMatch.answer }]);
+      setIsLoading(false);
+    }, 500);
+    return;
+  }
+
+  try {
     const contents = messages.length === 1
       ? [
           { role: 'system', parts: [{ text: systemPrompt }] },
@@ -68,39 +104,27 @@ const App = () => {
           role: msg.role,
           parts: [{ text: msg.content }]
         }));
-
-    try {
-      const geminiConfig = {
-        temperature: 0.9,
-        topP: 1,
-        topK: 1,
-        maxOutputTokens: 4096,
-      };
-      console.log(systemPrompt)
-      const ai = new GoogleGenerativeAI({ apiKey: process.env.REACT_APP_GEMINI_API_KEY });
-      const model = ai.getGenerativeModel({model: "gemini-pro",geminiConfig});
-      console.log(model)
-      const result = await model.generateContent({ contents });
-
-      const botResponse = result.response.candidates[0].content.parts[0].text;
-      setMessages([...updated, { role: 'assistant', content: botResponse }]);
-    } catch (e) {
-      console.error('Error:', e);
-      alert(JSON.stringify(e, null, 2));
-      if (e.response?.status === 401) {
-        setApiKeyError(true);
-        setError('Invalid API key. Please check your configuration.');
-      } else {
-        setError('Sorry, I encountered an error. Please try again or contact support.');
-      }
-      setMessages([...updated, { 
-        role: 'assistant', 
-        content: "I'm having trouble processing your request. Please try again or contact our support team for assistance." 
-      }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    const geminiConfig = {
+      temperature: 0.9,
+      topP: 1,
+      topK: 1,
+      maxOutputTokens: 4096,
+    };
+    const ai = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || "YOUR_API_KEY_HERE");
+    const model = ai.getGenerativeModel({model: "gemini-2.0-flash-lite",geminiConfig});
+    const result = await model.generateContent({ contents });
+    const botResponse = result.response.candidates[0].content.parts[0].text;
+    setMessages(prev => [...prev, { role: 'assistant', content: botResponse }]);
+  } catch (e) {
+    setError('Sorry, I encountered an error. Please try again or contact support.');
+    setMessages(prev => [...prev, { 
+      role: 'assistant', 
+      content: "I'm having trouble processing your request. Please try again or contact our support team for assistance." 
+    }]);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   return (
     <div className="chat-container">
